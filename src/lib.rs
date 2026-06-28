@@ -27,14 +27,19 @@ pub enum Error {
 }
 
 // Ref : https://www.rfc-editor.org/rfc/rfc1924
+const RFC1924_ALPHABET_LEN: usize = 85;
 const RFC1924_ALPHABET: &[u8] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
 
-//  Do at compile time to avoid the overhead of building the table at runtime.
+// Do at compile time to avoid the overhead of building the table at runtime.
 // No iterator available at compile time, so we have to generate the table with a const function.
 const fn generate_rfc1924_decode_table() -> [Option<u8>; 256] {
     let mut table: [Option<u8>; 256] = [None; 256];
     let mut i = 0;
+    assert!(
+        RFC1924_ALPHABET.len() == RFC1924_ALPHABET_LEN,
+        "ALPHABET must be 85 ascii-char len"
+    );
     while i < RFC1924_ALPHABET.len() {
         table[RFC1924_ALPHABET[i] as usize] = Some(i as u8);
         i += 1;
@@ -56,9 +61,7 @@ fn direct_char85_to_byte(c: u8) -> Result<u8> {
 
 #[inline]
 fn byte_to_char85(x85: u8) -> u8 {
-    static B85_TO_CHAR: &[u8] =
-        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
-    B85_TO_CHAR[x85 as usize]
+    RFC1924_ALPHABET[x85 as usize]
 }
 
 /// this is no allocation api for base85 encoding and decoding. it allow to encode and decode in place,
@@ -67,7 +70,10 @@ fn byte_to_char85(x85: u8) -> u8 {
 /// bytes written to the output buffer. the input buffer can be reused after encoding or decoding.
 ///
 /// During encoding, this function is used to calculate size to allocate for output buffer.
-pub fn calc_encode_len(indata_bytes_len: usize) -> usize {
+///
+/// const function allow you to evaluate it at compile time (usefull for set buffer size for no_alloc version)
+///
+pub const fn calc_encode_len(indata_bytes_len: usize) -> usize {
     let chunks_num = indata_bytes_len / 4;
     let remain = indata_bytes_len - (chunks_num * 4); // Modulo is more expensive than sub, so we do it this way
     if remain == 0 {
@@ -78,7 +84,7 @@ pub fn calc_encode_len(indata_bytes_len: usize) -> usize {
 }
 
 /// During decoding, this function is used to calculate size to allocate for output buffer.
-pub fn calc_decode_len(indata_bytes_len: usize) -> usize {
+pub const fn calc_decode_len(indata_bytes_len: usize) -> usize {
     let chunks_num = indata_bytes_len / 5;
     let remain = indata_bytes_len - (chunks_num * 5); // Mod is more expensive than sub, so we do it this way
     if remain == 0 {
@@ -88,21 +94,29 @@ pub fn calc_decode_len(indata_bytes_len: usize) -> usize {
     }
 }
 
-pub fn encode(indata: &[u8]) -> Result<String> {
-    let capacity = calc_encode_len(indata.len());
-    let mut out = Vec::with_capacity(capacity); // No initialization of the buffer is needed, as encode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
+pub fn encode(indata: &[u8]) -> String {
+    let encode_len = calc_encode_len(indata.len());
+    let mut out = Vec::with_capacity(encode_len); // No initialization of the buffer is needed, as encode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
     unsafe {
-        out.set_len(capacity);
+        out.set_len(encode_len);
     }
-    encode_noalloc(indata, &mut out)?;
+    // This no unsafe variant is same speed on big size array, but slower -+70% for short (8->16bytes size ??))
+    // let mut out = vec![0; encode_len];
+    let _ = encode_noalloc(indata, &mut out).unwrap();
+
+    // encode_noalloc  unwrap can't failed because we pre-allocate right size
+    //
+    // from_utf8
     // Encoding result is always a valid UTF-8 string, so we can safely use from_utf8_unchecked here.
-    // This is a micro optimization to avoid the overhead of checking for UTF-8 validity,
+    // This is a micro optimization to avoid the overhead of checking for UTF-8 validity, (4% to 15% )
     // which we know is guaranteed by the encoding process.
-    unsafe { Ok(String::from_utf8_unchecked(out)) }
+    // unwrap can't failed because we output only utf8 char
+    // from_utf_ move allocated space from out to String (no other allocation is done)
+    String::from_utf8(out).unwrap()
 }
 
 /// you can use calc_encode_len() to compute need size for output buffer
-pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a mut [u8]> {
+pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a str> {
     let chunks = indata.chunks_exact(4);
     let remainder = chunks.remainder();
     let final_encoded_len = calc_encode_len(indata.len());
@@ -139,8 +153,10 @@ pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a mut [u
             out_remainder[4] = byte_to_char85((decnum % 85u32) as u8);
         }
     }
-
-    Ok(&mut out[..final_encoded_len])
+    unsafe {
+        let r: &'a str = str::from_utf8_unchecked(&out[..final_encoded_len]);
+        Ok(r)
+    }
 }
 
 pub fn decode(indata: &[u8]) -> Result<Vec<u8>> {
@@ -239,7 +255,7 @@ mod tests {
             // complicated to write.
 
             for test in TESTLIST.iter() {
-                let s = encode(test.0.as_bytes())?;
+                let s = encode(test.0.as_bytes());
                 assert_eq!(
                     s, test.1,
                     "encoder test failed: wanted: {}, got: {}",
@@ -282,7 +298,7 @@ mod tests {
 
                 assert_eq!(
                     test.1.as_bytes(),
-                    resu,
+                    resu.as_bytes(),
                     "encoder test failed: wanted: {:?}, got: {:?}",
                     test.0.as_bytes(),
                     resu
@@ -349,7 +365,7 @@ mod tests {
             for i in 0..=255 {
                 input.push(i as u8);
             }
-            let encoded = encode(&input)?;
+            let encoded = encode(&input);
             assert_eq!(all_possible_encoded, encoded);
 
             let decoded = decode(encoded.as_bytes())?;

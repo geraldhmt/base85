@@ -8,11 +8,7 @@ use std::hint::black_box;
 fn encode_benchmark(c: &mut Criterion) {
     let mut testdata = vec![0; 0x100000];
     rand::thread_rng().fill_bytes(&mut testdata);
-    let encoded = match encode(&testdata) {
-        Ok(encoded) => encoded,
-        Err(e) => panic!("Error encoding test data: {e} at line: {}", line!()),
-    };
-
+    let encoded = encode(&testdata);
     c.bench_function("encoder", |b| {
         b.iter(|| {
             let _ = encode(black_box(&testdata));
@@ -27,7 +23,7 @@ fn encode_benchmark(c: &mut Criterion) {
 
     c.bench_function("encoder_short", |b| {
         b.iter(|| {
-            let _ = encode(black_box(&testdata[..11]));
+            let _ = encode(black_box(&testdata[..8]));
         })
     });
 

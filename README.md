@@ -10,8 +10,8 @@ The variant implemented in RFC 1924 was originally intended for encoding IPv6 ad
 
 ## Usage
 
-Although this code is my first real Rust code, the code is well-tested and the API is simple: `encode()` turns a slice of bytes into a String and `decode()` turns a string reference into a Vector of bytes (u8). Both calls work completely within RAM, so processing huge files is probably not a good idea.
+This crate was my my first real Rust code, created when I was still learning the language. Since its initial publication, outside contributors have made it even better than it originally was. The code is well-tested and the API is simple: `encode()` turns a slice of bytes into a String and `decode()` turns a string reference into a Vector of bytes (u8). Both calls work completely within RAM, so processing huge files is probably not a good idea.
 
 ## Contributions
 
-I've been coding for a while, but I'm still a beginner at Rust. Suggestions and contributions are always welcome.
+Suggestions and contributions are always welcome. At the same time, I no longer have a need for Rust, cannot remember how, and don't have time to relearn. If you would be interested in maintaining this crate, please contact me.

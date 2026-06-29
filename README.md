@@ -1,6 +1,6 @@
 # base85
 
-A library for Base85 encoding as described in RFC1924 and released under the Mozilla Public License 2.0. The official repository for this crate is at [GitLab](https://gitlab.com/darkwyrm/base85). Please submit all issues and PRs to that location.
+A library for Base85 encoding as described in RFC1924 and released under the Mozilla Public License 2.0.
 
 ## Description
 

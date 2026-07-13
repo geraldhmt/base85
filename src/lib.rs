@@ -32,6 +32,8 @@ pub enum Error {
     InvalidCharacter(u8),
     #[error("Output buffer too small")]
     OutputBufferTooSmall,
+    #[error("Group is out of range for valid Base85 (exceeds u32::MAX)")]
+    Overflow,
 }
 
 // Ref : https://www.rfc-editor.org/rfc/rfc1924
@@ -226,9 +228,11 @@ pub fn decode(indata: &[u8]) -> Result<Vec<u8>> {
         out = vec![0; final_decoded_len];
     }
 
-    let _ = decode_noalloc_inner(indata, final_decoded_len, &mut out)
-        .map_err(|_e| Error::UnexpectedEof)?;
-    Ok(out)
+    match decode_noalloc_inner(indata, final_decoded_len, &mut out) {
+        Ok(_) => Ok(out),
+        Err(Error::Overflow) => Err(Error::Overflow),
+        Err(_e) => Err(Error::UnexpectedEof),
+    }
 }
 
 /// decode() process indata as base85 encoded string and decode it to out slice
@@ -259,11 +263,17 @@ fn decode_noalloc_inner<'a>(
     let mut out_chunks = out.chunks_exact_mut(4);
 
     for (chunk, out_chunk) in std::iter::zip(chunks, &mut out_chunks) {
-        let accumulator = u32::from(char85_to_byte(chunk[0])?) * 85u32.pow(4)
-            + u32::from(char85_to_byte(chunk[1])?) * 85u32.pow(3)
-            + u32::from(char85_to_byte(chunk[2])?) * 85u32.pow(2)
-            + u32::from(char85_to_byte(chunk[3])?) * 85u32
-            + u32::from(char85_to_byte(chunk[4])?);
+        // A 5-character group can reach 84 * (85^4 + ... + 1) = 4_437_053_124, past
+        // u32::MAX, so accumulate in u64 and reject groups that don't fit in four bytes.
+        let accumulator = u64::from(char85_to_byte(chunk[0])?) * 85u64.pow(4)
+            + u64::from(char85_to_byte(chunk[1])?) * 85u64.pow(3)
+            + u64::from(char85_to_byte(chunk[2])?) * 85u64.pow(2)
+            + u64::from(char85_to_byte(chunk[3])?) * 85u64
+            + u64::from(char85_to_byte(chunk[4])?);
+        if accumulator > u64::from(u32::MAX) {
+            return Err(Error::Overflow);
+        }
+        let accumulator = accumulator as u32;
         out_chunk[0] = (accumulator >> 24) as u8;
         out_chunk[1] = (accumulator >> 16) as u8;
         out_chunk[2] = (accumulator >> 8) as u8;
@@ -276,11 +286,15 @@ fn decode_noalloc_inner<'a>(
         let c = remainder.get(2).copied();
         let d = remainder.get(3).copied();
         let e = remainder.get(4).copied();
-        let accumulator = u32::from(char85_to_byte(a)?) * 85u32.pow(4)
-            + u32::from(b.map_or(Err(Error::UnexpectedEof), char85_to_byte)?) * 85u32.pow(3)
-            + u32::from(c.map_or(Ok(126), char85_to_byte)?) * 85u32.pow(2)
-            + u32::from(d.map_or(Ok(126), char85_to_byte)?) * 85u32.pow(1)
-            + u32::from(e.map_or(Ok(126), char85_to_byte)?) * 85u32.pow(0);
+        let accumulator = u64::from(char85_to_byte(a)?) * 85u64.pow(4)
+            + u64::from(b.map_or(Err(Error::UnexpectedEof), char85_to_byte)?) * 85u64.pow(3)
+            + u64::from(c.map_or(Ok(126), char85_to_byte)?) * 85u64.pow(2)
+            + u64::from(d.map_or(Ok(126), char85_to_byte)?) * 85u64.pow(1)
+            + u64::from(e.map_or(Ok(126), char85_to_byte)?) * 85u64.pow(0);
+        if accumulator > u64::from(u32::MAX) {
+            return Err(Error::Overflow);
+        }
+        let accumulator = accumulator as u32;
         out_remainder[0] = (accumulator >> 24) as u8;
         if remainder.len() > 2 {
             out_remainder[1] = (accumulator >> 16) as u8;
@@ -447,5 +461,28 @@ mod tests {
             assert_eq!(input, decoded);
             Ok(())
         }
+    }
+
+    #[test]
+    fn test_overflow_groups_return_error() {
+        // Five '~' (84 each) accumulate to 4_437_053_124, past u32::MAX: this panicked
+        // in debug and produced wrong bytes in release before the fix.
+        assert!(matches!(decode("~~~~~".as_bytes()), Err(Error::Overflow)));
+
+        // Same overflow in the trailing-remainder block: "~~" reaches 4_384_852_500.
+        assert!(matches!(decode("~~".as_bytes()), Err(Error::Overflow)));
+
+        // A lone character is an incomplete group: it must still return UnexpectedEof
+        // rather than panicking on the overflowing multiply first.
+        assert!(matches!(decode("}".as_bytes()), Err(Error::UnexpectedEof)));
+
+        // Values right up to the u32 ceiling must still round-trip unchanged.
+        let max = encode(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            decode(max.as_bytes()).unwrap(),
+            vec![0xFF, 0xFF, 0xFF, 0xFF]
+        );
+        let one = encode(&[0xFF]);
+        assert_eq!(decode(one.as_bytes()).unwrap(), vec![0xFF]);
     }
 }

@@ -2,6 +2,8 @@
 
 A library for Base85 encoding as described in RFC1924 and released under the Mozilla Public License 2.0. The official repository for this crate is at [GitLab](https://gitlab.com/darkwyrm/base85). Please submit all issues and PRs to that location.
 
+This crate was my my first real Rust code, created when I was still learning the language. Since its initial publication, outside contributors have made it even better than it originally was. The code is well-tested and the API is simple: `encode()` turns a slice of bytes into a String and `decode()` turns a string reference into a Vector of bytes (u8). Both calls work completely within RAM, so processing huge files is probably not a good idea.
+
 ## Description
 
 Several variants of Base85 encoding exist. The most popular variant is often known also as ascii85 and is best known for use in Adobe products. This is not that algorithm.

@@ -1,7 +1,7 @@
 [package]
 name = "base85"
-version = "1.0.0"
-authors = ["Jon Yoder <jon@yoder.cloud>", "gerald Hermant"]
+version = "2.1.0"
+authors = ["Jon Yoder <jon@yoder.cloud>"]
 edition = "2021"
 description = "A fast library for Base85 encoding as described in RFC1924"
 readme = "README.md"

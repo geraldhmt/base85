@@ -32,6 +32,8 @@ pub enum Error {
     InvalidCharacter(u8),
     #[error("Output buffer too small")]
     OutputBufferTooSmall,
+    #[error("Group is out of range for valid Base85 (exceeds u32::MAX)")]
+    Overflow,
 }
 
 // Ref : https://www.rfc-editor.org/rfc/rfc1924
@@ -104,42 +106,52 @@ pub const fn calc_decode_len(indata_bytes_len: usize) -> usize {
 }
 
 /// encode return base85 encoded data in a new allocated String
-pub fn encode(indata: &[u8]) -> String {
-    let final_encoded_len = calc_encode_len(indata.len());
-    let mut out;
+///
+/// allow source as String, &str, &[u8]
+///
+pub fn encode<T>(indata: T) -> String
+where
+    T: AsRef<[u8]>,
+{
+    fn inner(indata: &[u8]) -> String {
+        let final_encoded_len = calc_encode_len(indata.len());
+        let mut out;
 
-    #[cfg(not(feature = "only_safe"))]
-    {
-        out = Vec::with_capacity(final_encoded_len);
-        unsafe {
-            // No initialization of the buffer is needed, as encode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
-            out.set_len(final_encoded_len);
+        #[cfg(not(feature = "only_safe"))]
+        {
+            out = Vec::with_capacity(final_encoded_len);
+            unsafe {
+                // No initialization of the buffer is needed, as encode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
+                out.set_len(final_encoded_len);
+            }
+        }
+        #[cfg(feature = "only_safe")]
+        {
+            out = vec![0; final_encoded_len];
+        }
+        // This no unsafe variant is same speed on big size array, but slower -+70% for short (8->16bytes size ??))
+        // let mut out = vec![0; encode_len];
+        let _ = encode_noalloc_inner(indata, final_encoded_len, &mut out).unwrap();
+
+        // encode_noalloc  unwrap can't failed because we pre-allocate right size
+        //
+        // from_utf8
+        // Encoding result is always a valid UTF-8 string, so we can safely use from_utf8_unchecked here.
+        // This is a micro optimization to avoid the overhead of checking for UTF-8 validity, (4% to 15% )
+        // which we know is guaranteed by the encoding process.
+        // unwrap can't failed because we output only utf8 char
+        // from_utf_ move allocated space from out to String (no other allocation is done)
+        #[cfg(not(feature = "only_safe"))]
+        {
+            unsafe { String::from_utf8_unchecked(out) }
+        }
+        #[cfg(feature = "only_safe")]
+        {
+            String::from_utf8(out).unwrap()
         }
     }
-    #[cfg(feature = "only_safe")]
-    {
-        out = vec![0; final_encoded_len];
-    }
-    // This no unsafe variant is same speed on big size array, but slower -+70% for short (8->16bytes size ??))
-    // let mut out = vec![0; encode_len];
-    let _ = encode_noalloc_inner(indata, final_encoded_len, &mut out).unwrap();
 
-    // encode_noalloc  unwrap can't failed because we pre-allocate right size
-    //
-    // from_utf8
-    // Encoding result is always a valid UTF-8 string, so we can safely use from_utf8_unchecked here.
-    // This is a micro optimization to avoid the overhead of checking for UTF-8 validity, (4% to 15% )
-    // which we know is guaranteed by the encoding process.
-    // unwrap can't failed because we output only utf8 char
-    // from_utf_ move allocated space from out to String (no other allocation is done)
-    #[cfg(not(feature = "only_safe"))]
-    {
-        unsafe { String::from_utf8_unchecked(out) }
-    }
-    #[cfg(feature = "only_safe")]
-    {
-        String::from_utf8(out).unwrap()
-    }
+    inner(indata.as_ref())
 }
 
 /// encode_noalloc will encode indata to out slice.
@@ -209,26 +221,36 @@ fn encode_noalloc_inner<'a>(
 }
 
 /// decode indata as base85 encoded to a new allocated Vec of u8
-pub fn decode(indata: &[u8]) -> Result<Vec<u8>> {
-    let final_decoded_len = calc_decode_len(indata.len());
-    let mut out;
+///
+/// allow source as String, &str, [u8]
+pub fn decode<T>(indata: T) -> Result<Vec<u8>>
+where
+    T: AsRef<[u8]>,
+{
+    fn inner(indata: &[u8]) -> Result<Vec<u8>> {
+        let final_decoded_len = calc_decode_len(indata.len());
+        let mut out;
 
-    #[cfg(not(feature = "only_safe"))]
-    {
-        out = Vec::with_capacity(final_decoded_len);
-        unsafe {
-            // No initialization of the buffer is needed, as decode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
-            out.set_len(final_decoded_len);
+        #[cfg(not(feature = "only_safe"))]
+        {
+            out = Vec::with_capacity(final_decoded_len);
+            unsafe {
+                // No initialization of the buffer is needed, as decode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
+                out.set_len(final_decoded_len);
+            }
+        }
+        #[cfg(feature = "only_safe")]
+        {
+            out = vec![0; final_decoded_len];
+        }
+
+        match decode_noalloc_inner(indata, final_decoded_len, &mut out) {
+            Ok(_) => Ok(out),
+            Err(Error::Overflow) => Err(Error::Overflow),
+            Err(_e) => Err(Error::UnexpectedEof),
         }
     }
-    #[cfg(feature = "only_safe")]
-    {
-        out = vec![0; final_decoded_len];
-    }
-
-    let _ = decode_noalloc_inner(indata, final_decoded_len, &mut out)
-        .map_err(|_e| Error::UnexpectedEof)?;
-    Ok(out)
+    inner(indata.as_ref())
 }
 
 /// decode() process indata as base85 encoded string and decode it to out slice
@@ -259,11 +281,17 @@ fn decode_noalloc_inner<'a>(
     let mut out_chunks = out.chunks_exact_mut(4);
 
     for (chunk, out_chunk) in std::iter::zip(chunks, &mut out_chunks) {
-        let accumulator = u32::from(char85_to_byte(chunk[0])?) * 85u32.pow(4)
-            + u32::from(char85_to_byte(chunk[1])?) * 85u32.pow(3)
-            + u32::from(char85_to_byte(chunk[2])?) * 85u32.pow(2)
-            + u32::from(char85_to_byte(chunk[3])?) * 85u32
-            + u32::from(char85_to_byte(chunk[4])?);
+        // A 5-character group can reach 84 * (85^4 + ... + 1) = 4_437_053_124, past
+        // u32::MAX, so accumulate in u64 and reject groups that don't fit in four bytes.
+        let accumulator = u64::from(char85_to_byte(chunk[0])?) * 85u64.pow(4)
+            + u64::from(char85_to_byte(chunk[1])?) * 85u64.pow(3)
+            + u64::from(char85_to_byte(chunk[2])?) * 85u64.pow(2)
+            + u64::from(char85_to_byte(chunk[3])?) * 85u64
+            + u64::from(char85_to_byte(chunk[4])?);
+        if accumulator > u64::from(u32::MAX) {
+            return Err(Error::Overflow);
+        }
+        let accumulator = accumulator as u32;
         out_chunk[0] = (accumulator >> 24) as u8;
         out_chunk[1] = (accumulator >> 16) as u8;
         out_chunk[2] = (accumulator >> 8) as u8;
@@ -276,11 +304,15 @@ fn decode_noalloc_inner<'a>(
         let c = remainder.get(2).copied();
         let d = remainder.get(3).copied();
         let e = remainder.get(4).copied();
-        let accumulator = u32::from(char85_to_byte(a)?) * 85u32.pow(4)
-            + u32::from(b.map_or(Err(Error::UnexpectedEof), char85_to_byte)?) * 85u32.pow(3)
-            + u32::from(c.map_or(Ok(126), char85_to_byte)?) * 85u32.pow(2)
-            + u32::from(d.map_or(Ok(126), char85_to_byte)?) * 85u32.pow(1)
-            + u32::from(e.map_or(Ok(126), char85_to_byte)?) * 85u32.pow(0);
+        let accumulator = u64::from(char85_to_byte(a)?) * 85u64.pow(4)
+            + u64::from(b.map_or(Err(Error::UnexpectedEof), char85_to_byte)?) * 85u64.pow(3)
+            + u64::from(c.map_or(Ok(126), char85_to_byte)?) * 85u64.pow(2)
+            + u64::from(d.map_or(Ok(126), char85_to_byte)?) * 85u64.pow(1)
+            + u64::from(e.map_or(Ok(126), char85_to_byte)?) * 85u64.pow(0);
+        if accumulator > u64::from(u32::MAX) {
+            return Err(Error::Overflow);
+        }
+        let accumulator = accumulator as u32;
         out_remainder[0] = (accumulator >> 24) as u8;
         if remainder.len() > 2 {
             out_remainder[1] = (accumulator >> 16) as u8;
@@ -443,9 +475,32 @@ mod tests {
             let all_possible_encoded:&str="009C61O)~M2nh-c3=Iws5D^j+6crX17#SKH9337XAR!_nBqb&%C@Cr{EG;fCFflSSG&MFiI5|2yJUu=?KtV!7L`6nNNJ&adOifNtP*GA-R8>}2SXo+ITwPvYU}0ioWMyV&XlZI|Y;A6DaB*^Tbai%jczJqze0_d@fPsR8goTEOh>41ejE#<ukdcy;l$Dm3n3<ZJoSmMZprN9pq@|{(sHv)}tgWuEu(7hUw6(UkxVgH!yuH4^z`?@9#Kp$P$jQpf%+1cv(9zP<)YaD4*xB0K+}+;a;Njxq<mKk)=;`X~?CtLF@bU8V^!4`l`1$(#{Qds_";
             assert_eq!(all_possible_encoded, encoded);
 
-            let decoded = decode(encoded.as_bytes())?;
+            let decoded = decode(encoded)?;
             assert_eq!(input, decoded);
             Ok(())
         }
+    }
+
+    #[test]
+    fn test_overflow_groups_return_error() {
+        // Five '~' (84 each) accumulate to 4_437_053_124, past u32::MAX: this panicked
+        // in debug and produced wrong bytes in release before the fix.
+        assert!(matches!(decode("~~~~~".to_string()), Err(Error::Overflow)));
+
+        // Same overflow in the trailing-remainder block: "~~" reaches 4_384_852_500.
+        assert!(matches!(decode("~~".as_bytes()), Err(Error::Overflow)));
+
+        // A lone character is an incomplete group: it must still return UnexpectedEof
+        // rather than panicking on the overflowing multiply first.
+        assert!(matches!(decode("}"), Err(Error::UnexpectedEof)));
+
+        // Values right up to the u32 ceiling must still round-trip unchanged.
+        let max = encode(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            decode(max.as_bytes()).unwrap(),
+            vec![0xFF, 0xFF, 0xFF, 0xFF]
+        );
+        let one = encode(&[0xFF]);
+        assert_eq!(decode(one.as_bytes()).unwrap(), vec![0xFF]);
     }
 }

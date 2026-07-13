@@ -1,7 +1,7 @@
 [package]
 name = "base85"
 version = "1.0.0"
-authors = ["gerald Hermant"]
+authors = ["Jon Yoder <jon@yoder.cloud>", "gerald Hermant"]
 edition = "2021"
 description = "A fast library for Base85 encoding as described in RFC1924"
 readme = "README.md"
@@ -11,14 +11,17 @@ license = "MPL-2.0-no-copyleft-exception"
 keywords = ["base85", "rfc1924", "encode", "decode"]
 categories = ["encoding"]
 exclude = [".gitignore"]
+[features]
+only_safe = [ # penality of 3 to 8 % perf (and more on very small packet)  
+]
 
 [dependencies]
 thiserror = { version = "2.0.0", default-features = false }
 
 [dev-dependencies]
+rand = { version = "0.10.1", features = ["thread_rng"] }
+anyhow = "1.0.103"
 criterion = { version = "0.8.2", features = ["html_reports"] }
-rand = "0"
-anyhow = "1.0.71"
 
 [[bench]]
 name = "encode"

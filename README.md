@@ -26,6 +26,12 @@ There is 2 levels api :
 * `calc_decode_len()` for compute decoded len from a encoded source
 * `decode_noalloc()` decode to a preallocated buffer
 
+## safe / unsafe code
+
+* Because during encode/decode, we know final size, we can allocate right size and set size to final value directly. This is unsafe code
+* If you absolutely, preferred **only_safe** code, activate feature only_safe. This limit performance by 3 to 8%, (more on very small array)
+* Try bench with/without : ```cargo bench --features only_safe``` or ```cargo bench``` to compare in your usuals cases
+
 ## Contributions
 
 I've been coding for a while, but I'm still a beginner at Rust. Suggestions and contributions are always welcome.

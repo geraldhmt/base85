@@ -10,6 +10,14 @@
 //!
 //! This was my first real Rust project but has matured since then and is stable. The API is simple: `encode()` turns a slice of bytes into a String and `decode()` turns a string reference into a Vector of bytes (u8). Both calls work completely within RAM, so processing huge files is probably not a good idea.
 //!
+//! ## performance / safe code only
+//!
+//! this crate is guide by performance. We do some optimization which required small unsafe section.
+//!
+//! If you absolue want to use only safe code, we add a feature : only_safe to allow you to chose a lite performance degradation but only safe code is used.
+//!
+//! We recommend to use bench (see readme) to compare performance in your use cases and choose.
+//!
 //! ## Contributions
 //!
 //! Even though I've been coding for a while and have learned quite a bit about Rust, I'm still a novice. Suggestions and contributions are always welcome and appreciated.
@@ -28,13 +36,14 @@ pub enum Error {
 
 // Ref : https://www.rfc-editor.org/rfc/rfc1924
 const RFC1924_ALPHABET_LEN: usize = 85;
-const RFC1924_ALPHABET: &[u8] =
+const RFC1924_ALPHABET: &[u8; RFC1924_ALPHABET_LEN] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
 
 // Do at compile time to avoid the overhead of building the table at runtime.
 // No iterator available at compile time, so we have to generate the table with a const function.
-const fn generate_rfc1924_decode_table() -> [Option<u8>; 256] {
-    let mut table: [Option<u8>; 256] = [None; 256];
+const U8_COUNT_VALUE: usize = std::u8::MAX as usize + 1;
+const fn generate_rfc1924_decode_table() -> [Option<u8>; U8_COUNT_VALUE] {
+    let mut table: [Option<u8>; U8_COUNT_VALUE] = [None; U8_COUNT_VALUE];
     let mut i = 0;
     assert!(
         RFC1924_ALPHABET.len() == RFC1924_ALPHABET_LEN,
@@ -47,7 +56,7 @@ const fn generate_rfc1924_decode_table() -> [Option<u8>; 256] {
     table
 }
 
-const RFC1924_DECODE: [Option<u8>; 256] = generate_rfc1924_decode_table();
+const RFC1924_DECODE: [Option<u8>; U8_COUNT_VALUE] = generate_rfc1924_decode_table();
 
 #[inline]
 fn char85_to_byte(c: u8) -> Result<u8> {
@@ -95,14 +104,24 @@ pub const fn calc_decode_len(indata_bytes_len: usize) -> usize {
 }
 
 pub fn encode(indata: &[u8]) -> String {
-    let encode_len = calc_encode_len(indata.len());
-    let mut out = Vec::with_capacity(encode_len); // No initialization of the buffer is needed, as encode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
-    unsafe {
-        out.set_len(encode_len);
+    let final_encoded_len = calc_encode_len(indata.len());
+    let mut out;
+
+    #[cfg(not(feature = "only_safe"))]
+    {
+        out = Vec::with_capacity(final_encoded_len);
+        unsafe {
+            // No initialization of the buffer is needed, as encode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
+            out.set_len(final_encoded_len);
+        }
+    }
+    #[cfg(feature = "only_safe")]
+    {
+        out = vec![0; final_encoded_len];
     }
     // This no unsafe variant is same speed on big size array, but slower -+70% for short (8->16bytes size ??))
     // let mut out = vec![0; encode_len];
-    let _ = encode_noalloc(indata, &mut out).unwrap();
+    let _ = encode_noalloc_inner(indata, final_encoded_len, &mut out).unwrap();
 
     // encode_noalloc  unwrap can't failed because we pre-allocate right size
     //
@@ -112,14 +131,29 @@ pub fn encode(indata: &[u8]) -> String {
     // which we know is guaranteed by the encoding process.
     // unwrap can't failed because we output only utf8 char
     // from_utf_ move allocated space from out to String (no other allocation is done)
-    String::from_utf8(out).unwrap()
+    #[cfg(not(feature = "only_safe"))]
+    {
+        unsafe { String::from_utf8_unchecked(out) }
+    }
+    #[cfg(feature = "only_safe")]
+    {
+        String::from_utf8(out).unwrap()
+    }
+}
+/// you can use calc_encode_len() to compute need size for output buffer
+pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a str> {
+    let final_encoded_len = calc_encode_len(indata.len());
+    encode_noalloc_inner(indata, final_encoded_len, out)
 }
 
 /// you can use calc_encode_len() to compute need size for output buffer
-pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a str> {
+fn encode_noalloc_inner<'a>(
+    indata: &[u8],
+    final_encoded_len: usize,
+    out: &'a mut [u8],
+) -> Result<&'a str> {
     let chunks = indata.chunks_exact(4);
     let remainder = chunks.remainder();
-    let final_encoded_len = calc_encode_len(indata.len());
     if out.len() < final_encoded_len {
         return Err(Error::OutputBufferTooSmall);
     }
@@ -153,33 +187,61 @@ pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a str> {
             out_remainder[4] = byte_to_char85((decnum % 85u32) as u8);
         }
     }
+
+    #[cfg(not(feature = "only_safe"))]
     unsafe {
         let r: &'a str = str::from_utf8_unchecked(&out[..final_encoded_len]);
+        Ok(r)
+    }
+    #[cfg(feature = "only_safe")]
+    {
+        let r: &'a str = str::from_utf8(&out[..final_encoded_len]).unwrap();
         Ok(r)
     }
 }
 
 pub fn decode(indata: &[u8]) -> Result<Vec<u8>> {
-    let capacity = calc_decode_len(indata.len());
-    let mut out = Vec::with_capacity(capacity);
-    unsafe {
-        // No initialization of the buffer is needed, as decode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
-        out.set_len(capacity);
+    let final_decoded_len = calc_decode_len(indata.len());
+    let mut out;
+
+    #[cfg(not(feature = "only_safe"))]
+    {
+        out = Vec::with_capacity(final_decoded_len);
+        unsafe {
+            // No initialization of the buffer is needed, as decode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
+            out.set_len(final_decoded_len);
+        }
     }
-    let _ = decode_noalloc(indata, &mut out).map_err(|_e| Error::UnexpectedEof)?;
+    #[cfg(feature = "only_safe")]
+    {
+        out = vec![0; final_decoded_len];
+    }
+
+    let _ = decode_noalloc_inner(indata, final_decoded_len, &mut out)
+        .map_err(|_e| Error::UnexpectedEof)?;
     Ok(out)
 }
 
 /// decode() turns a string of encoded data into a slice of bytes
 /// you can use calc_decode_len() to compute need size for output buffer
 pub fn decode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a mut [u8]> {
+    let final_decoded_len = calc_decode_len(indata.len());
+    decode_noalloc_inner(indata, final_decoded_len, out)
+}
+
+/// decode() turns a string of encoded data into a slice of bytes
+/// you can use calc_decode_len() to compute need size for output buffer
+fn decode_noalloc_inner<'a>(
+    indata: &[u8],
+    final_decoded_len: usize,
+    out: &'a mut [u8],
+) -> Result<&'a mut [u8]> {
     let chunks = indata.chunks_exact(5);
     let remainder = chunks.remainder();
-    let final_encoded_len = calc_decode_len(indata.len());
-    if out.len() < final_encoded_len {
+    if out.len() < final_decoded_len {
         return Err(Error::OutputBufferTooSmall);
     }
-    let out = &mut out[..final_encoded_len];
+    let out = &mut out[..final_decoded_len];
 
     let mut out_chunks = out.chunks_exact_mut(4);
 
@@ -218,7 +280,7 @@ pub fn decode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a mut [u
         }
     }
 
-    Ok(&mut out[..final_encoded_len])
+    Ok(&mut out[..final_decoded_len])
 }
 
 #[cfg(test)]

@@ -1,13 +1,15 @@
 // start bench with
 // cargo bench --message-format=short --bench=encode
+// cargo bench --message-format=short --bench=encode --features only_safe
+
 use base85::*;
 use criterion::{criterion_group, criterion_main, Criterion};
-use rand::RngCore;
+use rand::{rngs::ThreadRng, Rng};
 use std::hint::black_box;
 
 fn encode_benchmark(c: &mut Criterion) {
     let mut testdata = vec![0; 0x100000];
-    rand::thread_rng().fill_bytes(&mut testdata);
+    ThreadRng::default().fill_bytes(&mut testdata);
     let encoded = encode(&testdata);
     c.bench_function("encoder", |b| {
         b.iter(|| {
@@ -21,9 +23,15 @@ fn encode_benchmark(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("encoder_short", |b| {
+    c.bench_function("encoder_1K", |b| {
         b.iter(|| {
-            let _ = encode(black_box(&testdata[..8]));
+            let _ = encode(black_box(&testdata[..1024]));
+        })
+    });
+
+    c.bench_function("encoder_32B", |b| {
+        b.iter(|| {
+            let _ = encode(black_box(&testdata[..32]));
         })
     });
 

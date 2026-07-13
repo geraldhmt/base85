@@ -103,6 +103,7 @@ pub const fn calc_decode_len(indata_bytes_len: usize) -> usize {
     }
 }
 
+/// encode return base85 encoded data in a new allocated String
 pub fn encode(indata: &[u8]) -> String {
     let final_encoded_len = calc_encode_len(indata.len());
     let mut out;
@@ -140,7 +141,14 @@ pub fn encode(indata: &[u8]) -> String {
         String::from_utf8(out).unwrap()
     }
 }
+
+/// encode_noalloc will encode indata to out slice.
+///
+/// out slice must be big enough or Error will be return.
+///
 /// you can use calc_encode_len() to compute need size for output buffer
+///
+/// returned slice reference a sub part of given out slice
 pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a str> {
     let final_encoded_len = calc_encode_len(indata.len());
     encode_noalloc_inner(indata, final_encoded_len, out)
@@ -200,6 +208,7 @@ fn encode_noalloc_inner<'a>(
     }
 }
 
+/// decode indata as base85 encoded to a new allocated Vec of u8
 pub fn decode(indata: &[u8]) -> Result<Vec<u8>> {
     let final_decoded_len = calc_decode_len(indata.len());
     let mut out;
@@ -222,15 +231,19 @@ pub fn decode(indata: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// decode() turns a string of encoded data into a slice of bytes
+/// decode() process indata as base85 encoded string and decode it to out slice
+///
 /// you can use calc_decode_len() to compute need size for output buffer
+///
+/// returned slice reference a sub part of given out slice
 pub fn decode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a mut [u8]> {
     let final_decoded_len = calc_decode_len(indata.len());
     decode_noalloc_inner(indata, final_decoded_len, out)
 }
 
-/// decode() turns a string of encoded data into a slice of bytes
-/// you can use calc_decode_len() to compute need size for output buffer
+/// decode_noalloc_inner() this is the internal function
+///
+/// she **assert** than final_decoded_len is result of calc_decode_len()
 fn decode_noalloc_inner<'a>(
     indata: &[u8],
     final_decoded_len: usize,
@@ -421,13 +434,13 @@ mod tests {
         }
 
         #[test]
-        fn unit_encode_all_possible_chars() -> Result<()> {
-            let all_possible_encoded:&str="009C61O)~M2nh-c3=Iws5D^j+6crX17#SKH9337XAR!_nBqb&%C@Cr{EG;fCFflSSG&MFiI5|2yJUu=?KtV!7L`6nNNJ&adOifNtP*GA-R8>}2SXo+ITwPvYU}0ioWMyV&XlZI|Y;A6DaB*^Tbai%jczJqze0_d@fPsR8goTEOh>41ejE#<ukdcy;l$Dm3n3<ZJoSmMZprN9pq@|{(sHv)}tgWuEu(7hUw6(UkxVgH!yuH4^z`?@9#Kp$P$jQpf%+1cv(9zP<)YaD4*xB0K+}+;a;Njxq<mKk)=;`X~?CtLF@bU8V^!4`l`1$(#{Qds_";
+        fn unit_encode_and_decode_all_possible_chars() -> Result<()> {
             let mut input = Vec::<u8>::with_capacity(256);
             for i in 0..=255 {
                 input.push(i as u8);
             }
             let encoded = encode(&input);
+            let all_possible_encoded:&str="009C61O)~M2nh-c3=Iws5D^j+6crX17#SKH9337XAR!_nBqb&%C@Cr{EG;fCFflSSG&MFiI5|2yJUu=?KtV!7L`6nNNJ&adOifNtP*GA-R8>}2SXo+ITwPvYU}0ioWMyV&XlZI|Y;A6DaB*^Tbai%jczJqze0_d@fPsR8goTEOh>41ejE#<ukdcy;l$Dm3n3<ZJoSmMZprN9pq@|{(sHv)}tgWuEu(7hUw6(UkxVgH!yuH4^z`?@9#Kp$P$jQpf%+1cv(9zP<)YaD4*xB0K+}+;a;Njxq<mKk)=;`X~?CtLF@bU8V^!4`l`1$(#{Qds_";
             assert_eq!(all_possible_encoded, encoded);
 
             let decoded = decode(encoded.as_bytes())?;

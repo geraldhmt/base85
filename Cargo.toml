@@ -19,7 +19,7 @@ only_safe = [ # penality of 3 to 8 % perf (and more on very small packet)
 thiserror = { version = "2.0.0", default-features = false }
 
 [dev-dependencies]
-rand = { version = "0.10.1", features = ["thread_rng"] }
+rand = { version = "0.10.2", features = ["thread_rng"] }
 anyhow = "1.0.103"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 

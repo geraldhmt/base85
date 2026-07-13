@@ -1,3 +1,26 @@
 {
+    "window.zoomPerWindow": true,
+    // testExplorer include integration test
+    // https://rust-analyzer.github.io/book/configuration.html
+    "testing.followRunningTest": true,
     "rust-analyzer.testExplorer": true,
+    "rust-analyzer.showSyntaxTree": true,
+    "rust-analyzer.restartServerOnConfigChange": true,
+    "rust-analyzer.diagnostics.styleLints.enable": true,
+    "rust-analyzer.diagnostics.useRustcErrorCode": true,
+    "rust-analyzer.assist.emitMustUse": true,
+    "rust-analyzer.assist.preferSelf": true,
+    "rust-analyzer.cargo.autoreload": true,
+    "rust-analyzer.cargo.allTargets": false,
+    "rust-analyzer.cargo.buildScripts.rebuildOnSave": true,
+    "rust-analyzer.cargo.buildScripts.useRustcWrapper": true,
+    //
+    // rust-analyzer utilise des options de compilations différentes -> full rebuild régulier
+    // On lui dit d'utiliser un autre repertoire
+    "rust-analyzer.cargo.extraArgs": [
+        "--target-dir",
+        "/tmp/base85",
+        "--profile",
+        "test"
+    ],
 }

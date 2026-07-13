@@ -1,14 +1,16 @@
 // start bench with
 // cargo bench --message-format=short --bench=encode_noalloc
+// cargo bench --message-format=short --bench=encode_noalloc --features only_safe
 
 use base85::*;
 use criterion::{criterion_group, criterion_main, Criterion};
-use rand::RngCore;
+use rand::rngs::ThreadRng;
+use rand::Rng;
 use std::hint::black_box;
 
 fn encode_noalloc_benchmark(c: &mut Criterion) {
     let mut testdata = vec![0; 0x100000];
-    rand::thread_rng().fill_bytes(&mut testdata);
+    ThreadRng::default().fill_bytes(&mut testdata);
     let mut encoded_resudata = Vec::with_capacity(calc_encode_len(testdata.len()));
     encoded_resudata.resize(encoded_resudata.capacity(), 0);
     let mut resudata = Vec::with_capacity(encoded_resudata.capacity());
@@ -36,9 +38,18 @@ fn encode_noalloc_benchmark(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("encoder_noalloc_short", |b| {
+    c.bench_function("encoder_noalloc_1K", |b| {
         b.iter(|| {
-            let _ = match encode_noalloc(black_box(&testdata[..11]), black_box(&mut resudata)) {
+            let _ = match encode_noalloc(black_box(&testdata[..1024]), black_box(&mut resudata)) {
+                Ok(_) => {}
+                Err(e) => panic!("Error encoding test data: {e} at line: {}", line!()),
+            };
+        })
+    });
+
+    c.bench_function("encoder_noalloc_32B", |b| {
+        b.iter(|| {
+            let _ = match encode_noalloc(black_box(&testdata[..32]), black_box(&mut resudata)) {
                 Ok(_) => {}
                 Err(e) => panic!("Error encoding test data: {e} at line: {}", line!()),
             };

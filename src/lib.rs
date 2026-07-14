@@ -22,6 +22,8 @@
 //!
 //! Even though I've been coding for a while and have learned quite a bit about Rust, I'm still a novice. Suggestions and contributions are always welcome and appreciated.
 
+// use rand::distr::uniform::Error::NonFinite;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(thiserror::Error, Debug)]
@@ -85,23 +87,33 @@ fn byte_to_char85(x85: u8) -> u8 {
 /// const function allow you to evaluate it at compile time (usefull for set buffer size for no_alloc version)
 ///
 pub const fn calc_encode_len(indata_bytes_len: usize) -> usize {
+    calc_encode_len_typed(indata_bytes_len).0
+}
+
+struct EncodeLen(usize);
+const fn calc_encode_len_typed(indata_bytes_len: usize) -> EncodeLen {
     let chunks_num = indata_bytes_len / 4;
     let remain = indata_bytes_len - (chunks_num * 4); // Modulo is more expensive than sub, so we do it this way
     if remain == 0 {
-        chunks_num * 5
+        EncodeLen(chunks_num * 5)
     } else {
-        chunks_num * 5 + remain + 1
+        EncodeLen(chunks_num * 5 + remain + 1)
     }
 }
 
 /// During decoding, this function is used to calculate size to allocate for output buffer.
 pub const fn calc_decode_len(indata_bytes_len: usize) -> usize {
+    calc_decode_len_typed(indata_bytes_len).0
+}
+
+struct DecodeLen(usize);
+pub const fn calc_decode_len_typed(indata_bytes_len: usize) -> DecodeLen {
     let chunks_num = indata_bytes_len / 5;
     let remain = indata_bytes_len - (chunks_num * 5); // Mod is more expensive than sub, so we do it this way
     if remain == 0 {
-        chunks_num * 4
+        DecodeLen(chunks_num * 4)
     } else {
-        chunks_num * 4 + remain - 1
+        DecodeLen(chunks_num * 4 + remain - 1)
     }
 }
 
@@ -114,15 +126,15 @@ where
     T: AsRef<[u8]>,
 {
     fn inner(indata: &[u8]) -> String {
-        let final_encoded_len = calc_encode_len(indata.len());
+        let final_encoded_len = calc_encode_len_typed(indata.len());
         let mut out;
 
         #[cfg(not(feature = "only_safe"))]
         {
-            out = Vec::with_capacity(final_encoded_len);
+            out = Vec::with_capacity(final_encoded_len.0);
             unsafe {
                 // No initialization of the buffer is needed, as encode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
-                out.set_len(final_encoded_len);
+                out.set_len(final_encoded_len.0);
             }
         }
         #[cfg(feature = "only_safe")]
@@ -162,18 +174,20 @@ where
 ///
 /// returned slice reference a sub part of given out slice
 pub fn encode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a str> {
-    let final_encoded_len = calc_encode_len(indata.len());
+    let final_encoded_len = calc_encode_len_typed(indata.len());
     encode_noalloc_inner(indata, final_encoded_len, out)
 }
 
 /// you can use calc_encode_len() to compute need size for output buffer
 fn encode_noalloc_inner<'a>(
     indata: &[u8],
-    final_encoded_len: usize,
+    final_encoded_len: EncodeLen,
     out: &'a mut [u8],
 ) -> Result<&'a str> {
     let chunks = indata.chunks_exact(4);
     let remainder = chunks.remainder();
+    let final_encoded_len = final_encoded_len.0;
+
     if out.len() < final_encoded_len {
         return Err(Error::OutputBufferTooSmall);
     }
@@ -228,15 +242,15 @@ where
     T: AsRef<[u8]>,
 {
     fn inner(indata: &[u8]) -> Result<Vec<u8>> {
-        let final_decoded_len = calc_decode_len(indata.len());
+        let final_decoded_len = calc_decode_len_typed(indata.len());
         let mut out;
 
         #[cfg(not(feature = "only_safe"))]
         {
-            out = Vec::with_capacity(final_decoded_len);
+            out = Vec::with_capacity(final_decoded_len.0);
             unsafe {
                 // No initialization of the buffer is needed, as decode_noalloc will write to the entire buffer. We can safely set the length to the capacity after encoding.
-                out.set_len(final_decoded_len);
+                out.set_len(final_decoded_len.0);
             }
         }
         #[cfg(feature = "only_safe")]
@@ -259,7 +273,7 @@ where
 ///
 /// returned slice reference a sub part of given out slice
 pub fn decode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a mut [u8]> {
-    let final_decoded_len = calc_decode_len(indata.len());
+    let final_decoded_len = calc_decode_len_typed(indata.len());
     decode_noalloc_inner(indata, final_decoded_len, out)
 }
 
@@ -268,11 +282,12 @@ pub fn decode_noalloc<'a>(indata: &[u8], out: &'a mut [u8]) -> Result<&'a mut [u
 /// she **assert** than final_decoded_len is result of calc_decode_len()
 fn decode_noalloc_inner<'a>(
     indata: &[u8],
-    final_decoded_len: usize,
+    final_decoded_len: DecodeLen,
     out: &'a mut [u8],
 ) -> Result<&'a mut [u8]> {
     let chunks = indata.chunks_exact(5);
     let remainder = chunks.remainder();
+    let final_decoded_len = final_decoded_len.0;
     if out.len() < final_decoded_len {
         return Err(Error::OutputBufferTooSmall);
     }

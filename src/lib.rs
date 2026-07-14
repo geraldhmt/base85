@@ -107,7 +107,7 @@ pub const fn calc_decode_len(indata_bytes_len: usize) -> usize {
 }
 
 struct DecodeLen(usize);
-pub const fn calc_decode_len_typed(indata_bytes_len: usize) -> DecodeLen {
+const fn calc_decode_len_typed(indata_bytes_len: usize) -> DecodeLen {
     let chunks_num = indata_bytes_len / 5;
     let remain = indata_bytes_len - (chunks_num * 5); // Mod is more expensive than sub, so we do it this way
     if remain == 0 {
